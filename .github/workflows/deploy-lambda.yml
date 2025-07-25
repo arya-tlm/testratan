@@ -21,7 +21,7 @@ jobs:
     
     - name: Create deployment package
       run: |
-        zip -r lambda-deployment.zip lambdafunction.py
+        zip -r lambda-deployment.zip lambda_function.py
     
     - name: Deploy to Lambda
       run: |
