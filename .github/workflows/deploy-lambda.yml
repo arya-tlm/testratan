@@ -11,6 +11,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
+      with:
+        fetch-depth: 0  # Get full history for better diff detection
 
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
@@ -19,33 +21,78 @@ jobs:
         aws-secret-access-key: ${{ secrets.SECRET_ACCESS_KEY }}
         aws-region: ap-south-1
 
-    - name: List files for debugging
+    - name: Get changed Python files
+      id: changed-files
       run: |
-        echo "Files in repository:"
-        ls -la *.py
-        echo "Git status:"
-        git status
-
-    - name: Deploy test_github function
-      run: |
-        echo "Deploying test_github function"
-        
-        # Check if file exists
-        if [ ! -f "test_github.py" ]; then
-          echo "Error: test_github.py not found!"
-          exit 1
+        # Get list of changed .py files (excluding .github folder)
+        if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+          # First push to repository
+          changed_files=$(find . -name "*.py" -not -path "./.github/*" -printf "%f\n")
+        else
+          # Regular push - find changed files
+          changed_files=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '\.py$' | grep -v '.github' | xargs -I {} basename {} || echo "")
         fi
         
-        # Create deployment package
-        cp test_github.py lambda_function.py
-        zip lambda-deployment.zip lambda_function.py
+        echo "Changed Python files:"
+        echo "$changed_files"
         
-        # Deploy to AWS
-        aws lambda update-function-code \
-          --function-name test_github \
-          --zip-file fileb://lambda-deployment.zip
+        # Save to output
+        echo "files<<EOF" >> $GITHUB_OUTPUT
+        echo "$changed_files" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+    - name: Deploy changed functions
+      run: |
+        files="${{ steps.changed-files.outputs.files }}"
         
-        echo "✅ Successfully deployed test_github"
+        if [ -z "$files" ] || [ "$files" = "" ]; then
+          echo "ℹ️ No Python files changed - nothing to deploy"
+          exit 0
+        fi
         
-        # Clean up
-        rm lambda_function.py lambda-deployment.zip
+        echo "🚀 Starting deployment of changed functions..."
+        echo ""
+        
+        # Counter for tracking deployments
+        deployed_count=0
+        failed_count=0
+        
+        for file in $files; do
+          if [ -f "$file" ]; then
+            # Extract function name (remove .py extension)
+            function_name=$(basename "$file" .py)
+            
+            echo "📦 Deploying: $function_name (from $file)"
+            
+            # Create deployment package
+            cp "$file" lambda_function.py
+            zip -q lambda-deployment.zip lambda_function.py
+            
+            # Deploy to AWS Lambda
+            if aws lambda update-function-code \
+              --function-name "$function_name" \
+              --zip-file fileb://lambda-deployment.zip > /dev/null 2>&1; then
+              echo "✅ SUCCESS: $function_name deployed"
+              deployed_count=$((deployed_count + 1))
+            else
+              echo "❌ FAILED: $function_name (function may not exist in AWS)"
+              failed_count=$((failed_count + 1))
+            fi
+            
+            # Clean up
+            rm -f lambda_function.py lambda-deployment.zip
+            echo ""
+          fi
+        done
+        
+        echo "📊 DEPLOYMENT SUMMARY:"
+        echo "   ✅ Successful: $deployed_count"
+        echo "   ❌ Failed: $failed_count"
+        
+        if [ $failed_count -gt 0 ]; then
+          echo ""
+          echo "💡 Failed deployments may be due to:"
+          echo "   - Lambda function doesn't exist in AWS"
+          echo "   - Function name mismatch"
+          echo "   - Insufficient permissions"
+        fi
