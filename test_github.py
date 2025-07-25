@@ -1,7 +1,7 @@
 import json
 
 def lambda_handler(event, context):
-    print("Testing auto-deployment from PyCharm!")
+    print("hoga bhai mere")
     return {
         'statusCode': 200,
         'body': json.dumps('Auto-deploy test - success!')
