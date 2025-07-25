@@ -2,7 +2,7 @@ import json
 
 def lambda_handler(event, context):
     # TODO implement
-    print("THis is 3rd file")
+    print("mera bhi hogya bhai")
     return {
         'statusCode': 200,
         'body': json.dumps('Hello from Lambda!')
